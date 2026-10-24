@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CorreaTaxEZ – 2026 Tax Estimator</title>
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style type="text/tailwindcss">
   .inp{@apply w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:outline-none}
   .lbl{@apply block text-xs font-bold uppercase text-slate-600 mb-1}
@@ -48,7 +49,7 @@
       <!-- STEP 1 -->
       <div id="step-1" class="space-y-5">
         <div><h2 class="text-2xl font-bold">Documents</h2>
-          <p class="text-sm text-slate-500 mt-1">Attach your tax documents for reference, or load sample data. Files are kept in your browser only and are <b>not</b> auto-read: enter the figures in Step 3.</p></div>
+          <p class="text-sm text-slate-500 mt-1">Attach W-2s (text PDF) and stock-sale 1099-B exports (CSV). Files are read in your browser and never uploaded. Review the extracted values, then apply them. Other files are listed but not read.</p></div>
         <div class="bg-sky-50 border border-sky-100 rounded-xl p-4">
           <div class="lbl text-sky-800">Sample data</div>
           <div class="flex flex-wrap gap-2">
@@ -60,11 +61,12 @@
         <label id="dropZone" for="fileInput" class="block border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-slate-50 cursor-pointer hover:border-sky-500">
           <input type="file" id="fileInput" multiple accept=".pdf,.png,.jpg,.jpeg,.csv" class="hidden">
           <div class="font-semibold">Drag &amp; drop or click to attach documents</div>
-          <div class="text-xs text-slate-500 mt-1">PDF, PNG, JPG or CSV</div>
+          <div class="text-xs text-slate-500 mt-1">W-2 as text PDF · 1099-B as CSV</div>
         </label>
         <div>
           <div class="text-sm font-bold mb-2 flex justify-between"><span>Attached documents</span><span id="docCount" class="text-xs bg-slate-200 px-2 py-0.5 rounded-full font-normal">0</span></div>
           <div id="docList" class="space-y-2 max-h-56 overflow-y-auto"></div>
+          <div id="reviewBox" class="space-y-3 mt-3"></div>
         </div>
       </div>
 
@@ -125,7 +127,7 @@
             <div id="formBannerTitle" class="text-xs uppercase font-extrabold tracking-wider"></div>
             <div id="formBannerAmt" class="text-3xl font-black"></div>
           </div>
-          <p class="text-[10px] text-slate-500">Estimate only; not tax advice. Excludes EITC, additional Medicare tax, NIIT, AMT, SSTB limits and other items. Have a tax professional review before filing.</p>
+          <p class="text-[10px] text-slate-500">Estimate only; not tax advice. Excludes EITC, additional Medicare tax, AMT, SSTB limits and other items. Have a tax professional review before filing.</p>
         </div>
       </div>
 
@@ -167,20 +169,22 @@
 </main>
 
 <script>
-/* ============ 2026 PARAMETERS ============ */
+/* ============ 2026 PARAMETERS ============
+   Sources: IRS Rev. Proc. 2025-32 and the 2025 tax law (OBBBA). Verify every figure
+   against the IRS before relying on it, and update annually. */
 const P = {
   std:   { single:16100, mfj:32200, hoh:24150, mfs:16100 },
-  addlSingle:2050, addlMarried:1650,
-  br: {
+  addlSingle:2050, addlMarried:1650,           // per 65+/blind taxpayer
+  br: {  // [upper limit, rate]
     single:[[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[640600,.35],[Infinity,.37]],
     mfj:   [[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.32],[768700,.35],[Infinity,.37]],
     hoh:   [[17700,.10],[67450,.12],[105700,.22],[201750,.24],[256200,.32],[640600,.35],[Infinity,.37]],
     mfs:   [[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[384350,.35],[Infinity,.37]]
   },
-  cg: { single:[49450,545500], mfj:[98900,613700], hoh:[66200,579600], mfs:[49450,306850] },
+  cg: { single:[49450,545500], mfj:[98900,613700], hoh:[66200,579600], mfs:[49450,306850] }, // 0% / 15% ceilings
   ssWageBase:184500,
   iraLimit:7500,
-  iraPO: { single:[81000,91000], hoh:[81000,91000], mfj:[129000,149000], mfs:[0,10000] },
+  iraPO: { single:[81000,91000], hoh:[81000,91000], mfj:[129000,149000], mfs:[0,10000] },  // when covered by a plan
   slLimit:2500, slPO: { single:[85000,100000], hoh:[85000,100000], mfj:[175000,205000] },
   salt:40400, saltFloor:10000, saltPO:505000,
   ctc:2200, actcMax:1700,
@@ -201,44 +205,55 @@ function phaseOut(amount, magi, [lo,hi]){ return amount * clamp((hi - magi) / (h
 function compute(s){
   const st = s.st, mfj = st==='mfj', mfs = st==='mfs';
 
+  // Self-employment
   const netSE  = Math.max(0, s.freelance - s.bizExp);
   const seBase = netSE * 0.9235;
   const seTax  = seBase < 400 ? 0 :
     Math.min(seBase, Math.max(0, P.ssWageBase - s.w2)) * 0.124 + seBase * 0.029;
   const seHalf = seTax / 2;
 
-  const totalIncome = s.w2 + netSE + s.interest + s.dividends;
+  // Income & adjustments
+  // Capital gains: net short/long-term, $3,000 loss limit, long-term portion taxed at preferential rates
+  const netCG = s.stGain + s.ltGain, lossCap = st === 'mfs' ? 1500 : 3000;
+  const prefCG = netCG > 0 ? Math.max(0, Math.min(s.ltGain, netCG)) : 0;
+  const lossDed = netCG < 0 ? Math.min(lossCap, -netCG) : 0;
+  const capGain = netCG > 0 ? netCG : -lossDed;
+  const totalIncome = s.w2 + netSE + s.interest + s.dividends + capGain;
   const magiPre = totalIncome - seHalf;
   const ira = Math.min(s.ira, P.iraLimit) * (s.covered ? phaseOut(1, magiPre, P.iraPO[st]) : 1);
   const sl  = mfs ? 0 : phaseOut(Math.min(s.sl, P.slLimit), magiPre - ira, P.slPO[st]);
   const adjustments = seHalf + ira + sl;
   const agi = Math.max(0, totalIncome - adjustments);
 
+  // Standard vs itemized
   const addl = (mfj || mfs ? P.addlMarried : P.addlSingle) * (s.seniors + s.blind);
-  const nonItemCharity = Math.min(s.charity, mfj ? 2000 : 1000);
+  const nonItemCharity = Math.min(s.charity, mfj ? 2000 : 1000);        // new for 2026 (standard-deduction filers)
   const stdTotal = P.std[st] + addl + nonItemCharity;
   const half = mfs ? 2 : 1;
   const saltBase = P.salt / half, saltFloor = P.saltFloor / half, saltPO = P.saltPO / half;
   const saltCap = agi > saltPO ? Math.max(saltFloor, saltBase - 0.3 * (agi - saltPO)) : saltBase;
   const salt = Math.min(s.salt, saltCap);
-  const charity = Math.max(0, s.charity - 0.005 * agi);
+  const charity = Math.max(0, s.charity - 0.005 * agi);                   // 0.5%-of-AGI floor starting 2026
   const medical = Math.max(0, s.medical - 0.075 * agi);
   const itemized = s.mortgage + salt + charity + medical;
   const useItemized = itemized > stdTotal;
   const deduction = useItemized ? itemized : stdTotal;
 
+  // Senior deduction (2025–2028) and QBI
   const seniorDed = mfs ? 0 : Math.max(0, s.seniors * P.seniorDed - 0.06 * Math.max(0, agi - P.seniorPO[st]));
   const tiPre = Math.max(0, agi - deduction - seniorDed);
-  const qbiDed = Math.min(0.2 * Math.max(0, netSE - seHalf), 0.2 * Math.max(0, tiPre - Math.min(s.qualDiv, s.dividends)));
+  const qbiDed = Math.min(0.2 * Math.max(0, netSE - seHalf), 0.2 * Math.max(0, tiPre - Math.min(s.qualDiv, s.dividends) - prefCG));
   const taxable = Math.max(0, tiPre - qbiDed);
 
-  const qd = Math.min(taxable, Math.min(s.qualDiv, s.dividends));
+  // Regular tax with preferential rates on qualified dividends
+  const qd = Math.min(taxable, Math.min(s.qualDiv, s.dividends) + prefCG);
   const ord = taxable - qd, [t0, t1] = P.cg[st];
   const at0  = Math.max(0, Math.min(qd, t0 - ord));
   const at15 = Math.max(0, Math.min(qd - at0, t1 - Math.max(ord, t0)));
   const at20 = qd - at0 - at15;
   const tax = bracketTax(ord, st) + 0.15 * at15 + 0.20 * at20;
 
+  // Child tax credit (nonrefundable part + refundable ACTC)
   const ctcFull = s.children * P.ctc;
   const ctcPO = Math.ceil(Math.max(0, agi - (mfj ? 400000 : 200000)) / 1000) * 50;
   const ctc = Math.max(0, ctcFull - ctcPO);
@@ -246,13 +261,17 @@ function compute(s){
   const earned = Math.max(0, s.w2 + netSE - seHalf);
   const actc = Math.max(0, Math.min(ctc - nonref, s.children * P.actcMax, 0.15 * Math.max(0, earned - 2500)));
 
+  // Totals
   const incomeTax = tax - nonref;
-  const totalTax = incomeTax + seTax;
+  const niitThr = { single:200000, hoh:200000, mfj:250000, mfs:125000 }[st];
+  const niit = 0.038 * Math.max(0, Math.min(s.interest + s.dividends + Math.max(0, netCG), agi - niitThr));
+  const totalTax = incomeTax + seTax + niit;
   const withholding = s.w2Withheld + s.estPaid;
   const payments = withholding + actc;
   const net = payments - totalTax;
 
   const warnings = [];
+  if (netCG < -lossCap) warnings.push(`Capital loss over the limit: ${fmt(-netCG - lossCap)} carries over to 2027 (not tracked here).`);
   if (st === 'hoh' && s.children === 0) warnings.push('Head of household normally requires a qualifying person (child or other dependent).');
   if (netSE > 0 && tiPre > P.qbiThreshold[st]) warnings.push('Taxable income is above the QBI threshold; SSTB/wage limits may reduce or remove the QBI deduction.');
   if (s.ira > P.iraLimit) warnings.push('IRA contribution exceeds the annual limit; the excess was ignored.');
@@ -261,13 +280,14 @@ function compute(s){
 
   return { st, totalIncome, netSE, seTax, seHalf, ira, sl, adjustments, agi, stdTotal, nonItemCharity, itemized, useItemized,
     deduction, seniorDed, qbiDed, taxable, tax, ctc, nonref, actc, incomeTax, totalTax, withholding, payments, net, warnings,
-    interest: s.interest, dividends: s.dividends, qualDiv: qd, w2: s.w2 };
+    interest: s.interest, dividends: s.dividends, qualDiv: Math.min(s.qualDiv, s.dividends), w2: s.w2, capGain, niit };
 }
 
 /* ============ UI ============ */
 const $ = id => document.getElementById(id);
 const fmt = v => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US');
 const num = id => Math.max(0, parseFloat($(id).value) || 0);
+const sgn = id => parseFloat($(id).value) || 0;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const INCOME = [
@@ -278,7 +298,9 @@ const INCOME = [
   ['estPaid','Estimated payments / 1099 withholding',1200],
   ['interest','Taxable interest (1099-INT)',850],
   ['dividends','Ordinary dividends (1099-DIV 1a)',1400],
-  ['qualDiv','…of which qualified (1b)',900,'Taxed at lower capital-gain rates.']
+  ['qualDiv','…of which qualified (1b)',900,'Taxed at lower capital-gain rates.'],
+  ['stGain','Net short-term capital gain/(loss)',0,'Negative for a loss. From Form 8949 / Schedule D.',1],
+  ['ltGain','Net long-term capital gain/(loss)',0,'Negative for a loss. Taxed at lower rates.',1]
 ];
 const DEDUCT = [
   ['children','Qualifying children under 17',1,'Credit per child, reduced at high income.'],
@@ -289,7 +311,7 @@ const DEDUCT = [
   ['charity','Cash charitable donations',1500],
   ['medical','Unreimbursed medical expenses',0,'Only the part above 7.5% of AGI counts.']
 ];
-const field = ([id,l,d,h]) => `<div><label class="lbl" for="${id}">${l}</label><input type="number" min="0" id="${id}" value="${d}" class="inp" oninput="update()"><p class="text-[11px] text-slate-500 mt-1">${h||''}</p></div>`;
+const field = ([id,l,d,h,neg]) => `<div><label class="lbl" for="${id}">${l}</label><input type="number" ${neg ? '' : 'min="0"'} id="${id}" value="${d}" class="inp"><p class="text-[11px] text-slate-500 mt-1">${h||''}</p></div>`;
 $('incomeFields').innerHTML = INCOME.map(field).join('');
 $('deductFields').innerHTML = DEDUCT.map(field).join('');
 $('priorFields').innerHTML = [
@@ -298,20 +320,14 @@ $('priorFields').innerHTML = [
 ].map(field).join('');
 $('statusCards').innerHTML = STATUS.map(([v,l],i) => `
   <label class="status-card border-2 rounded-xl p-3 cursor-pointer text-sm">
-    <input type="radio" name="status" value="${v}" ${i===0?'checked':''} class="mb-1" onchange="update()"> <b>${l}</b>
+    <input type="radio" name="status" value="${v}" ${i===0?'checked':''} class="mb-1"> <b>${l}</b>
     <div class="text-xs text-slate-500">Std. deduction ${fmt(P.std[v])}</div></label>`).join('');
 
-document.querySelectorAll('input').forEach(el => el.addEventListener('input', update));
-document.querySelectorAll('input[name="status"]').forEach(el => el.addEventListener('change', update));
-$('covered').addEventListener('change', update);
-
 function readState(){
-  const stEl = document.querySelector('input[name=status]:checked');
-  const stVal = stEl ? stEl.value : 'single';
-  const mx = stVal === 'mfj' ? 2 : 1;
-  return { st: stVal,
+  const mx = document.querySelector('input[name=status]:checked').value === 'mfj' ? 2 : 1;
+  return { st: document.querySelector('input[name=status]:checked').value,
     w2:num('w2Wages'), w2Withheld:num('w2Withheld'), freelance:num('freelance'), bizExp:num('bizExp'), estPaid:num('estPaid'),
-    interest:num('interest'), dividends:num('dividends'), qualDiv:num('qualDiv'),
+    interest:num('interest'), dividends:num('dividends'), qualDiv:num('qualDiv'), stGain:sgn('stGain'), ltGain:sgn('ltGain'),
     children:Math.floor(num('children')), ira:num('ira'), sl:num('studentLoan'), mortgage:num('mortgage'),
     salt:num('salt'), charity:num('charity'), medical:num('medical'),
     seniors:Math.min(Math.floor(num('seniors')), mx), blind:Math.min(Math.floor(num('blind')), mx), covered:$('covered').checked,
@@ -323,8 +339,7 @@ const rowHTML = (l, v, cls='') => `<div class="row ${cls}"><span class="text-sla
 function update(){
   const s = readState(), r = compute(s), st = r.st;
   document.querySelectorAll('.status-card').forEach(c => {
-    const radio = c.querySelector('input');
-    const on = radio && radio.checked;
+    const on = c.querySelector('input').checked;
     c.classList.toggle('border-sky-500', on); c.classList.toggle('bg-sky-50', on); c.classList.toggle('border-slate-200', !on);
   });
   const refund = r.net >= 0, amt = fmt(Math.abs(r.net));
@@ -336,7 +351,7 @@ function update(){
     ['Total income', fmt(r.totalIncome)], ['Adjustments', '-' + fmt(r.adjustments)], ['AGI', fmt(r.agi), 'bg-slate-50 font-bold'],
     [r.useItemized ? 'Itemized deduction' : 'Standard deduction', '-' + fmt(r.deduction)],
     ['QBI + senior deduction', '-' + fmt(r.qbiDed + r.seniorDed)], ['Taxable income', fmt(r.taxable), 'font-bold'],
-    ['Income tax', fmt(r.tax)], ['Child tax credit', '-' + fmt(r.nonref)], ['Self-employment tax', fmt(r.seTax)],
+    ['Income tax', fmt(r.tax)], ['Child tax credit', '-' + fmt(r.nonref)], ['SE + investment tax', fmt(r.seTax + r.niit)],
     ['Total tax', fmt(r.totalTax), 'font-bold'], ['Withholding + estimated', fmt(r.withholding)], ['Refundable child credit', fmt(r.actc)]
   ].map(a => rowHTML(a[0], a[1], a[2])).join('');
   const bc = refund ? ['bg-emerald-50 border-emerald-200 text-emerald-800','text-emerald-600'] : ['bg-rose-50 border-rose-200 text-rose-800','text-rose-600'];
@@ -353,17 +368,16 @@ function update(){
   const digits = $('ssn').value.replace(/\D/g, '');
   $('sumSSN').textContent = 'SSN: XXX-XX-' + (digits.length >= 4 ? digits.slice(-4) : 'XXXX');
   $('sumName').textContent = (($('firstName').value || 'Taxpayer') + ' ' + $('lastName').value).trim();
-  const foundStatus = STATUS.find(x => x[0] === st);
-  $('sumStatus').textContent = foundStatus ? foundStatus[1] : 'Single';
+  $('sumStatus').textContent = STATUS.find(x => x[0] === st)[1];
   $('formRows').innerHTML = [
     ['1z: Wages (W-2)', fmt(r.w2)], ['2b: Taxable interest', fmt(r.interest)],
     ['3b: Ordinary dividends (3a qualified: ' + fmt(r.qualDiv) + ')', fmt(r.dividends)],
-    ['8 (Sch. 1): Business income', fmt(r.netSE)], ['9: Total income', fmt(r.totalIncome), 'bg-slate-50 font-semibold'],
+    ['7: Capital gain or (loss)', fmt(r.capGain)], ['8 (Sch. 1): Business income', fmt(r.netSE)], ['9: Total income', fmt(r.totalIncome), 'bg-slate-50 font-semibold'],
     ['10: Adjustments (½ SE tax, IRA, student loan)', '-' + fmt(r.adjustments)], ['11: Adjusted gross income', fmt(r.agi), 'bg-slate-50 font-semibold'],
     ['12: ' + (r.useItemized ? 'Itemized' : 'Standard') + ' deduction', '-' + fmt(r.deduction)],
     ['13a: QBI deduction', '-' + fmt(r.qbiDed)], ['13b: Senior deduction (Sch. 1-A)', '-' + fmt(r.seniorDed)],
     ['15: Taxable income', fmt(r.taxable), 'bg-slate-50 font-semibold'], ['16: Tax', fmt(r.tax)],
-    ['19: Child tax credit (nonrefundable)', '-' + fmt(r.nonref)], ['23: Other taxes (self-employment, Sch. 2)', fmt(r.seTax)],
+    ['19: Child tax credit (nonrefundable)', '-' + fmt(r.nonref)], ['23: Other taxes (SE tax + net investment income tax)', fmt(r.seTax + r.niit)],
     ['24: Total tax', fmt(r.totalTax), 'bg-slate-100 font-bold'], ['25d/26: Withholding + estimated payments', fmt(r.withholding)],
     ['28: Refundable child tax credit', fmt(r.actc)], ['33: Total payments', fmt(r.payments), 'font-semibold']
   ].map(a => rowHTML('Line ' + a[0], a[1], a[2])).join('');
@@ -381,8 +395,8 @@ function quarterly(r, s){
   const current = 0.9 * r.totalTax;
   const prior = s.priorTax === null ? Infinity : s.priorTax * pct;
   const required = Math.min(current, prior);
-  const credits = s.w2Withheld + r.actc;
-  const owed = r.totalTax - credits;
+  const credits = s.w2Withheld + r.actc;            // withholding + refundable credits (estimates excluded)
+  const owed = r.totalTax - credits;                // the $1,000 test ignores estimated payments
   const needed = owed >= 1000 ? Math.max(0, required - credits) : 0;
   return { pct, current, prior, required, basis: prior < current ? 'prior-year' : 'current-year', credits, owed, needed,
     perQ: needed / 4, remaining: Math.max(0, needed - s.estPaid), nextYear: r.totalTax * (r.agi > limit ? 1.10 : 1.00) };
@@ -400,7 +414,7 @@ function renderQuarterly(r, s){
   } else if (q.remaining <= 0) {
     head = "You're covered";
     body = q.needed === 0 ? 'Your withholding and credits alone meet the safe harbor, so no underpayment penalty should apply.'
-                        : `Your estimated payments (${fmt(s.estPaid)}) meet the ${fmt(q.needed)} needed for the safe harbor.`;
+                          : `Your estimated payments (${fmt(s.estPaid)}) meet the ${fmt(q.needed)} needed for the safe harbor.`;
   } else {
     tone = 'a'; head = 'Estimated payments needed';
     const amt = idx < 0 ? q.remaining : Math.min(q.remaining, Math.max(0, q.perQ * (idx + 1) - s.estPaid));
@@ -430,7 +444,7 @@ function renderQuarterly(r, s){
 /* ---- Wizard ---- */
 const TITLES = ['Documents','Personal & filing status','Income','Credits & deductions','Summary','Quarterly estimates'];
 const TIPS = [
-  'Attach documents here for reference, then enter the box amounts in Step 3.',
+  'Attach W-2 PDFs and 1099-B CSVs, check the extracted numbers, then apply them. Always compare against the original forms.',
   'Married filing jointly usually has the larger standard deduction, but compare against filing separately for your situation.',
   'Freelance income is also subject to self-employment tax (15.3% on 92.35% of net earnings), which this estimate includes.',
   'Deductions reduce taxable income, so each dollar saves your marginal rate, not a full dollar of refund. Credits reduce tax dollar for dollar.',
@@ -459,111 +473,182 @@ function showStep(n){
 }
 function printForm(){ showStep(5); setTimeout(() => window.print(), 50); }
 
-/* ---- Documents & Sample Data & Drafts ---- */
+/* ---- Documents (attachments are not parsed) ---- */
 let docs = [];
-function addDoc(d){ if (!docs.some(x => x.name === d.name)) docs.push(d); renderDocs(); }
+function addDoc(d){ if (!docs.some(x => x.name === d.name)) { if (!d.note) d.note = (d.type || '') + (d.notes ? ' – ' + d.notes : ''); docs.push(d); } renderDocs(); }
 function renderDocs(){
-  $('docCount').textContent = docs.length;
+  $('docCount').textContent = docs.length; renderReview();
   const list = $('docList');
   list.innerHTML = docs.length ? '' : '<div class="text-center py-6 text-slate-400 text-xs italic border border-dashed rounded-xl">No documents attached.</div>';
   docs.forEach((d, i) => {
     const row = document.createElement('div');
     row.className = 'flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs';
-    row.innerHTML = `<div><b>${esc(d.name)}</b> <span class="text-slate-400">(${Math.round(d.size/1024)} KB)</span></div><button onclick="docs.splice(${i},1);renderDocs()" class="text-rose-500 font-bold hover:underline">Remove</button>`;
-    list.appendChild(row);
+    const info = document.createElement('div');
+    const n = document.createElement('div'); n.className = 'font-bold'; n.textContent = d.name;
+    const t = document.createElement('div'); t.className = 'text-slate-500'; t.textContent = d.note;
+    info.append(n, t);
+    const rm = document.createElement('button'); rm.textContent = 'Remove'; rm.className = 'text-slate-400 hover:text-rose-500';
+    rm.onclick = () => { const g = docs.splice(i, 1)[0]; if (g.applied) { Object.keys(g.vals).forEach(k => $(k).value = 0); applyDocs(); } renderDocs(); };
+    row.append(info, rm); list.append(row);
   });
 }
-$('fileInput').onchange = e => { Array.from(e.target.files).forEach(addDoc); };
-const dz = $('dropZone');
-dz.ondragover = e => { e.preventDefault(); dz.classList.add('border-sky-500','bg-sky-50'); };
-dz.ondragleave = () => { dz.classList.remove('border-sky-500','bg-sky-50'); };
-dz.ondrop = e => { e.preventDefault(); dz.classList.remove('border-sky-500','bg-sky-50'); Array.from(e.dataTransfer.files).forEach(addDoc); };
-
-function loadSample(type){
-  if(type === 'w2'){
-    $('w2Wages').value = 95000; $('w2Withheld').value = 14200;
-  } else if(type === 'nec'){
-    $('freelance').value = 25000; $('bizExp').value = 4000;
-  } else if(type === 'full'){
-    $('firstName').value = 'Juan'; $('lastName').value = 'Correa'; $('occupation').value = 'AVP Enterprise Risk Management';
-    $('w2Wages').value = 145000; $('w2Withheld').value = 24000;
-    $('freelance').value = 18000; $('bizExp').value = 3500;
-    $('interest').value = 450; $('dividends').value = 850; $('qualDiv').value = 600;
-    $('children').value = 0; $('ira').value = 7500; $('studentLoan').value = 0;
-    $('mortgage').value = 14000; $('salt').value = 10000; $('charity').value = 2500; $('medical').value = 0;
-    document.querySelector('input[name=status][value="mfj"]').checked = true;
+/* ---- Document reading (runs in the browser; nothing is uploaded) ---- */
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const LABELS = { w2Wages:'W-2 Box 1 wages', w2Withheld:'W-2 Box 2 federal tax withheld', stGain:'Net short-term gain/(loss)', ltGain:'Net long-term gain/(loss)' };
+async function pdfItems(file){
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise, out = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    tc.items.forEach(i => out.push({ t: i.str.trim(), x: i.transform[4], y: i.transform[5], p }));
   }
+  return out.filter(i => i.t);
+}
+function valueNear(items, re){
+  const lab = items.find(i => re.test(i.t)); if (!lab) return null;
+  const c = items.filter(i => i.p === lab.p && /^[\d,]+\.\d{2}$/.test(i.t) && i.x >= lab.x - 10 && i.x - lab.x < 200 && lab.y - i.y > -5 && lab.y - i.y < 40)
+    .sort((a, b) => Math.hypot(a.x - lab.x, a.y - lab.y) - Math.hypot(b.x - lab.x, b.y - lab.y));
+  return c[0] ? parseFloat(c[0].t.replace(/,/g, '')) : null;
+}
+async function readPDF(file){
+  if (!window.pdfjsLib) return { type:'PDF', notes:'PDF reader failed to load (check your connection).' };
+  const items = await pdfItems(file), text = items.map(i => i.t).join(' ');
+  if (/1099-B|proceeds from broker/i.test(text)) return { type:'1099-B PDF', notes:'PDF stock statements are not read yet. Export the CSV from your broker instead.' };
+  if (!/wage and tax statement|\bW-2\b/i.test(text)) return { type:'Unrecognized PDF', notes:'Only W-2s are read from PDFs (scanned images need text).' };
+  const vals = { w2Wages: valueNear(items, /wages, tips, other comp/i), w2Withheld: valueNear(items, /federal income tax withheld/i) };
+  const b3 = valueNear(items, /social security wages/i), b4 = valueNear(items, /social security tax withheld/i), notes = [];
+  if (b3 && b4 && b3 < P.ssWageBase && Math.abs(b4 - b3 * 0.062) > 2) notes.push('Box 3/4 fail the 6.2% check; verify the numbers.');
+  const yr = items.find(i => /^20\d\d$/.test(i.t)); if (yr && yr.t !== '2026') notes.push(`Form shows tax year ${yr.t}.`);
+  Object.keys(vals).forEach(k => { if (vals[k] === null) { delete vals[k]; notes.push(`${LABELS[k]} not found.`); } });
+  return { type:'W-2', vals: Object.keys(vals).length ? vals : null, notes: notes.join(' ') };
+}
+function parseCSV(t){
+  const rows = []; let r = [], c = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i+1] === '"') { c += '"'; i++; } else q = false; } else c += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { r.push(c); c = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i+1] === '\n') i++; r.push(c); c = ''; if (r.some(x => x.trim())) rows.push(r); r = []; }
+    else c += ch;
+  }
+  r.push(c); if (r.some(x => x.trim())) rows.push(r);
+  return rows;
+}
+async function readCSV(file){
+  const rows = parseCSV(await file.text()), h = rows.findIndex(r => r.some(c => /proceeds/i.test(c)));
+  if (h < 0) return { type:'CSV', notes:'No "Proceeds" column found; this is not a recognized 1099-B export.' };
+  const hdr = rows[h].map(x => x.trim()), col = re => hdr.findIndex(x => re.test(x));
+  const money = x => { const n = parseFloat(String(x).replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1')); return isNaN(n) ? 0 : n; };
+  const cP = col(/proceeds/i), cB = col(/adjusted.*(cost|basis)/i) >= 0 ? col(/adjusted.*(cost|basis)/i) : col(/cost|basis/i),
+        cW = col(/wash/i), cG = hdr.findIndex(x => /gain|loss/i.test(x) && !/wash|disallowed/i.test(x)),
+        cT = col(/term|holding/i), cA = col(/acquired|open/i), cS = col(/sold|close/i);
+  let st = 0, lt = 0, n = 0, unk = 0;
+  rows.slice(h + 1).forEach(r => {
+    if (!/\d/.test(r[cP] || '') || /total/i.test(r.join(' '))) return;
+    const g = cG >= 0 && (r[cG] || '').trim() !== '' ? money(r[cG]) : money(r[cP]) - money(r[cB]) + (cW >= 0 ? money(r[cW]) : 0);
+    const t = r[cT] || ''; let isLT = /long|^lt/i.test(t);
+    if (!isLT && !/short|^st/i.test(t)) { const d = (new Date(r[cS]) - new Date(r[cA])) / 864e5; isLT = d > 365; if (isNaN(d)) unk++; }
+    isLT ? lt += g : st += g; n++;
+  });
+  if (!n) return { type:'CSV', notes:'No sale rows found.' };
+  return { type:`1099-B CSV (${n} lots)`, vals:{ stGain: Math.round(st * 100) / 100, ltGain: Math.round(lt * 100) / 100 },
+    notes: (unk ? `${unk} rows had no holding period; treated as short-term. ` : '') + 'RSU/ESPP: if the basis leaves out income already in your W-2, use the broker’s adjusted basis or your gain is overstated.' };
+}
+async function handleFiles(files){
+  for (const f of Array.from(files)) {
+    let res;
+    try {
+      if (/\.pdf$/i.test(f.name)) res = await readPDF(f);
+      else if (/\.csv$/i.test(f.name)) res = await readCSV(f);
+      else if (/\.(png|jpe?g)$/i.test(f.name)) res = { type:'Image', notes:'Images are not read (no OCR). Enter the amounts in Step 3.' };
+      else continue;
+    } catch (e) { res = { type:'Unreadable', notes:'Could not read this file: ' + e.message }; }
+    addDoc({ name: f.name, ...res });
+  }
+}
+function applyDocs(){
+  const sum = {};
+  docs.filter(d => d.applied).forEach(d => Object.entries(d.vals).forEach(([k, v]) => sum[k] = (sum[k] || 0) + v));
+  Object.entries(sum).forEach(([k, v]) => $(k).value = Math.round(v * 100) / 100);
   update();
 }
+function renderReview(){
+  const box = $('reviewBox'); box.innerHTML = '';
+  docs.forEach((d, i) => {
+    if (!d.vals || d.applied) return;
+    const el = document.createElement('div');
+    el.className = 'border border-amber-300 bg-amber-50 rounded-xl p-3 text-xs space-y-2';
+    el.innerHTML = `<div class="font-bold">Review values from ${esc(d.name)}</div>` + Object.keys(d.vals).map(k =>
+      `<label class="flex items-center justify-between gap-2">${LABELS[k]}<input type="number" step="0.01" data-k="${k}" value="${d.vals[k]}" class="inp !w-36 !p-1.5"></label>`).join('');
+    const ok = document.createElement('button'), no = document.createElement('button');
+    ok.textContent = 'Apply to return'; ok.className = 'btn !py-1.5 bg-sky-700 text-white mr-2';
+    no.textContent = 'Discard'; no.className = 'btn !py-1.5 bg-slate-200';
+    ok.onclick = () => { el.querySelectorAll('input').forEach(x => d.vals[x.dataset.k] = parseFloat(x.value) || 0); d.applied = true; d.note = d.type + ' – applied to return'; applyDocs(); renderDocs(); };
+    no.onclick = () => { docs.splice(i, 1); renderDocs(); };
+    el.append(ok, no); box.append(el);
+  });
+}
+const dz = $('dropZone');
+['dragenter','dragover','dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.toggle('border-sky-500', ev === 'dragenter' || ev === 'dragover'); }));
+dz.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+$('fileInput').addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
 
+/* ---- Samples ---- */
+const SAMPLES = {
+  w2:   { vals:{ w2Wages:98500, w2Withheld:15200 }, docs:[['Sample_W2.pdf','Sample W-2 data loaded']] },
+  nec:  { vals:{ freelance:18400, estPaid:2100, bizExp:3200 }, docs:[['Sample_1099_NEC.pdf','Sample 1099-NEC data loaded']] },
+  full: { vals:{ w2Wages:105000, w2Withheld:17500, freelance:14000, estPaid:1800, bizExp:2100, interest:920, dividends:1350, qualDiv:900,
+                 ira:6500, studentLoan:1800, mortgage:11200, salt:5400, charity:2100, children:2 },
+          docs:[['Sample_W2.pdf','Sample W-2 data loaded'],['Sample_1099_NEC.pdf','Sample 1099-NEC data loaded'],['Sample_1098.pdf','Sample 1098 data loaded']] }
+};
+function loadSample(k){
+  const s = SAMPLES[k];
+  if (!confirm('This overwrites the matching fields with sample values. Continue?')) return;
+  Object.entries(s.vals).forEach(([id, v]) => $(id).value = v);
+  s.docs.forEach(([name, note]) => addDoc({ name, note })); update();
+}
+
+/* ---- Save / load / export / reset (SSN is never stored or exported) ---- */
+const DRAFT_KEY = 'correataxez_draft_2026';
+try { localStorage.removeItem('taxease_draft_2026'); } catch (e) {}  // clear drafts saved under the old name
+const draftIds = () => [...document.querySelectorAll('input[type=number]'), $('firstName'), $('lastName'), $('occupation')].map(e => e.id);
 function saveDraft(){
-  const state = readState();
-  state.firstName = $('firstName').value;
-  state.lastName = $('lastName').value;
-  state.ssn = $('ssn').value;
-  state.occupation = $('occupation').value;
-  localStorage.setItem('correa_tax_draft', JSON.stringify(state));
-  alert('Draft saved successfully to browser storage!');
+  const d = { status: readState().st, covered: $('covered').checked, v: {} };
+  draftIds().forEach(id => d.v[id] = $(id).value);
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); alert('Draft saved in this browser (SSN is not saved).'); }
+  catch (e) { alert('Could not save a draft in this browser.'); }
 }
-
 function loadDraft(){
-  const raw = localStorage.getItem('correa_tax_draft');
-  if(!raw){ alert('No saved draft found.'); return; }
-  try {
-    const s = JSON.parse(raw);
-    if(s.firstName) $('firstName').value = s.firstName;
-    if(s.lastName) $('lastName').value = s.lastName;
-    if(s.ssn) $('ssn').value = s.ssn;
-    if(s.occupation) $('occupation').value = s.occupation;
-    if(s.st){
-      const radio = document.querySelector(`input[name=status][value="${s.st}"]`);
-      if(radio) radio.checked = true;
-    }
-    if(s.w2 !== undefined) $('w2Wages').value = s.w2;
-    if(s.w2Withheld !== undefined) $('w2Withheld').value = s.w2Withheld;
-    if(s.freelance !== undefined) $('freelance').value = s.freelance;
-    if(s.bizExp !== undefined) $('bizExp').value = s.bizExp;
-    if(s.estPaid !== undefined) $('estPaid').value = s.estPaid;
-    if(s.interest !== undefined) $('interest').value = s.interest;
-    if(s.dividends !== undefined) $('dividends').value = s.dividends;
-    if(s.qualDiv !== undefined) $('qualDiv').value = s.qualDiv;
-    if(s.children !== undefined) $('children').value = s.children;
-    if(s.ira !== undefined) $('ira').value = s.ira;
-    if(s.sl !== undefined) $('studentLoan').value = s.sl;
-    if(s.mortgage !== undefined) $('mortgage').value = s.mortgage;
-    if(s.salt !== undefined) $('salt').value = s.salt;
-    if(s.charity !== undefined) $('charity').value = s.charity;
-    if(s.medical !== undefined) $('medical').value = s.medical;
-    if(s.seniors !== undefined) $('seniors').value = s.seniors;
-    if(s.blind !== undefined) $('blind').value = s.blind;
-    if(s.covered !== undefined) $('covered').checked = s.covered;
-    if(s.priorTax !== null && s.priorTax !== undefined) $('priorTax').value = s.priorTax;
-    if(s.priorAGI !== undefined) $('priorAGI').value = s.priorAGI;
-    update();
-    alert('Draft loaded successfully!');
-  } catch(e) {
-    alert('Error loading draft.');
-  }
+  let d; try { d = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) {}
+  if (!d) return alert('No saved draft found.');
+  Object.entries(d.v).forEach(([id, v]) => { if ($(id)) $(id).value = v; });
+  $('covered').checked = !!d.covered;
+  const r = document.querySelector(`input[name=status][value="${d.status}"]`); if (r) r.checked = true;
+  update();
 }
-
-function resetData(){
-  if(confirm('Are you sure you want to reset all form values?')){
-    localStorage.removeItem('correa_tax_draft');
-    location.reload();
-  }
-}
-
 function exportJSON(){
-  const s = readState(), r = compute(s);
-  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({state: s, result: r}, null, 2));
-  const dlAnchorElem = document.createElement('a');
-  dlAnchorElem.setAttribute("href", dataStr);
-  dlAnchorElem.setAttribute("download", "correa_tax_2026_estimate.json");
-  dlAnchorElem.click();
+  const s = readState(), data = { timestamp: new Date().toISOString(), taxYear: 2026, inputs: s, result: compute(s), quarterly: quarterly(compute(s), s) };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a'); a.href = url; a.download = 'CorreaTaxEZ_Estimate_2026.json'; a.click(); URL.revokeObjectURL(url);
+}
+function resetData(){
+  if (!confirm('Reset all fields and delete the saved draft?')) return;
+  document.querySelectorAll('input[type=number]').forEach(i => i.value = 0);
+  $('priorTax').value = '';
+  ['firstName','lastName','ssn','occupation'].forEach(id => $(id).value = '');
+  $('covered').checked = false; document.querySelector('input[name=status][value=single]').checked = true;
+  try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+  docs = []; renderDocs(); update();
 }
 
-showStep(1);
-update();
+/* ---- Init ---- */
+$('ssn').addEventListener('input', e => {
+  const d = e.target.value.replace(/\D/g, '').slice(0, 9);
+  e.target.value = d.length > 5 ? `${d.slice(0,3)}-${d.slice(3,5)}-${d.slice(5)}` : d.length > 3 ? `${d.slice(0,3)}-${d.slice(3)}` : d;
+});
+document.body.addEventListener('input', update);
+document.body.addEventListener('change', update);
+renderDocs(); showStep(1); update();
 </script>
 </body>
 </html>
