@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CorreaTaxEZ – 2026 Tax Estimator</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<style type="text/tailwindcss">
+  .inp{@apply w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-sky-500 focus:outline-none}
+  .lbl{@apply block text-xs font-bold uppercase text-slate-600 mb-1}
+  .btn{@apply px-4 py-2 rounded-lg text-sm font-semibold transition}
+  .row{@apply flex justify-between gap-3 py-1.5 border-b border-slate-100 text-sm}
+</style>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  @media print{body *{visibility:hidden}#form1040,#form1040 *{visibility:visible}#form1040{position:absolute;left:0;top:0;width:100%}}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+<header class="bg-slate-900 text-white sticky top-0 z-40 shadow-md">
+  <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
+    <div class="font-extrabold text-xl">Correa<span class="text-teal-400">TaxEZ</span>
+      <span class="hidden sm:inline text-xs bg-slate-800 text-teal-300 px-2 py-0.5 rounded-full ml-2">2026 Tax Year</span></div>
+    <div class="bg-slate-800 rounded-2xl px-4 py-1.5 border border-slate-700 text-right">
+      <div id="tickerLabel" class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Estimated Refund</div>
+      <div id="ticker" class="text-2xl font-black text-emerald-400">$0</div>
+    </div>
+    <div class="flex gap-1.5 text-xs font-semibold">
+      <button onclick="saveDraft()" class="btn !py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700">Save</button>
+      <button onclick="loadDraft()" class="btn !py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700">Load</button>
+      <button onclick="resetData()" class="btn !py-1.5 text-rose-400 hover:bg-slate-800">Reset</button>
+    </div>
+  </div>
+</header>
+
+<main class="flex-grow max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+  <section class="lg:col-span-8 space-y-4">
+    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+      <div class="flex justify-between text-xs font-semibold text-slate-500 mb-2">
+        <span id="stepText" class="text-sky-700 font-bold uppercase tracking-wider"></span><span id="stepTitle"></span>
+      </div>
+      <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden"><div id="bar" class="bg-gradient-to-r from-sky-500 to-teal-500 h-full transition-all duration-500"></div></div>
+      <nav id="stepNav" class="grid grid-cols-6 gap-1 mt-3 text-center" aria-label="Steps"></nav>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+      <!-- STEP 1 -->
+      <div id="step-1" class="space-y-5">
+        <div><h2 class="text-2xl font-bold">Documents</h2>
+          <p class="text-sm text-slate-500 mt-1">Attach your tax documents for reference, or load sample data. Files are kept in your browser only and are <b>not</b> auto-read: enter the figures in Step 3.</p></div>
+        <div class="bg-sky-50 border border-sky-100 rounded-xl p-4">
+          <div class="lbl text-sky-800">Sample data</div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="loadSample('w2')" class="btn bg-white border border-sky-200 text-sky-700 hover:bg-sky-600 hover:text-white">Sample W-2</button>
+            <button onclick="loadSample('nec')" class="btn bg-white border border-teal-200 text-teal-700 hover:bg-teal-600 hover:text-white">Sample 1099-NEC</button>
+            <button onclick="loadSample('full')" class="btn bg-slate-900 text-white hover:bg-slate-800">Complete profile</button>
+          </div>
+        </div>
+        <label id="dropZone" for="fileInput" class="block border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-slate-50 cursor-pointer hover:border-sky-500">
+          <input type="file" id="fileInput" multiple accept=".pdf,.png,.jpg,.jpeg,.csv" class="hidden">
+          <div class="font-semibold">Drag &amp; drop or click to attach documents</div>
+          <div class="text-xs text-slate-500 mt-1">PDF, PNG, JPG or CSV</div>
+        </label>
+        <div>
+          <div class="text-sm font-bold mb-2 flex justify-between"><span>Attached documents</span><span id="docCount" class="text-xs bg-slate-200 px-2 py-0.5 rounded-full font-normal">0</span></div>
+          <div id="docList" class="space-y-2 max-h-56 overflow-y-auto"></div>
+        </div>
+      </div>
+
+      <!-- STEP 2 -->
+      <div id="step-2" class="hidden space-y-5">
+        <div><h2 class="text-2xl font-bold">Personal details &amp; filing status</h2>
+          <p class="text-sm text-slate-500 mt-1">Your filing status sets your standard deduction and brackets.</p></div>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div><label class="lbl" for="firstName">First name</label><input id="firstName" class="inp" value="Alex"></div>
+          <div><label class="lbl" for="lastName">Last name</label><input id="lastName" class="inp" value="Morgan"></div>
+          <div><label class="lbl" for="ssn">SSN (never saved or exported)</label><input id="ssn" class="inp" inputmode="numeric" maxlength="11" autocomplete="off" placeholder="123-45-6789"></div>
+          <div><label class="lbl" for="occupation">Occupation</label><input id="occupation" class="inp" value="Senior Software Engineer"></div>
+        </div>
+        <div><div class="lbl">Filing status</div><div id="statusCards" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div></div>
+        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 grid sm:grid-cols-3 gap-3 text-xs">
+          <div><label class="lbl" for="seniors">Taxpayers 65+ (0–2)</label><input type="number" id="seniors" min="0" max="2" value="0" class="inp"></div>
+          <div><label class="lbl" for="blind">Legally blind (0–2)</label><input type="number" id="blind" min="0" max="2" value="0" class="inp"></div>
+          <label class="flex items-center gap-2 pt-5 font-medium"><input type="checkbox" id="covered"> Covered by a workplace retirement plan</label>
+        </div>
+      </div>
+
+      <!-- STEP 3 -->
+      <div id="step-3" class="hidden space-y-5">
+        <div><h2 class="text-2xl font-bold">Income &amp; withholding</h2>
+          <p class="text-sm text-slate-500 mt-1">Wages, self-employment, interest and dividends.</p></div>
+        <div id="incomeFields" class="grid md:grid-cols-2 gap-4"></div>
+      </div>
+
+      <!-- STEP 4 -->
+      <div id="step-4" class="hidden space-y-5">
+        <div><h2 class="text-2xl font-bold">Credits &amp; deductions</h2>
+          <p class="text-sm text-slate-500 mt-1">We compare the standard and itemized deduction and use the larger.</p></div>
+        <div id="deductFields" class="grid md:grid-cols-2 gap-4"></div>
+      </div>
+
+      <!-- STEP 5 -->
+      <div id="step-5" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div><h2 class="text-2xl font-bold">Form 1040 summary</h2>
+            <p class="text-sm text-slate-500 mt-1">An estimate laid out like Form 1040. This is not an official return and cannot be e-filed.</p></div>
+          <div class="flex gap-2">
+            <button onclick="exportJSON()" class="btn bg-slate-800 text-white hover:bg-slate-700">Export JSON</button>
+            <button onclick="printForm()" class="btn bg-sky-700 text-white hover:bg-sky-800">Print / Save PDF</button>
+          </div>
+        </div>
+        <div id="form1040" class="border-2 border-slate-800 rounded-2xl p-6 space-y-3">
+          <div class="border-b-2 border-slate-800 pb-3 flex justify-between">
+            <div><div class="font-extrabold text-lg">Form 1040 <span class="text-xs font-medium text-slate-500">(estimate)</span></div>
+              <div class="text-xs text-slate-600">U.S. Individual Income Tax Return</div></div>
+            <div class="text-right"><div class="text-2xl font-black">2026</div><div id="sumSSN" class="font-mono text-xs text-slate-600"></div></div>
+          </div>
+          <div class="grid grid-cols-2 gap-4 text-sm pb-2 border-b border-slate-200">
+            <div><span class="block text-[10px] uppercase text-slate-400">Taxpayer</span><b id="sumName"></b></div>
+            <div><span class="block text-[10px] uppercase text-slate-400">Filing status</span><b id="sumStatus"></b></div>
+          </div>
+          <div id="formRows"></div>
+          <div id="formBanner" class="p-4 rounded-xl border-2 flex items-center justify-between">
+            <div id="formBannerTitle" class="text-xs uppercase font-extrabold tracking-wider"></div>
+            <div id="formBannerAmt" class="text-3xl font-black"></div>
+          </div>
+          <p class="text-[10px] text-slate-500">Estimate only; not tax advice. Excludes EITC, additional Medicare tax, NIIT, AMT, SSTB limits and other items. Have a tax professional review before filing.</p>
+        </div>
+      </div>
+
+      <!-- STEP 6 -->
+      <div id="step-6" class="hidden space-y-5">
+        <div><h2 class="text-2xl font-bold">Quarterly estimated taxes</h2>
+          <p class="text-sm text-slate-500 mt-1">Checks whether you should make estimated payments during 2026 to avoid an underpayment penalty when you file in 2027. Uses your figures from the earlier steps; estimated payments entered in Step 3 count as paid so far.</p></div>
+        <div id="priorFields" class="grid md:grid-cols-2 gap-4"></div>
+        <div id="qResult" class="space-y-4"></div>
+      </div>
+
+      <div class="pt-5 mt-5 border-t border-slate-200 flex justify-between">
+        <button id="prevBtn" class="btn bg-slate-100 hover:bg-slate-200 disabled:opacity-40">← Back</button>
+        <button id="nextBtn" class="btn bg-gradient-to-r from-sky-700 to-teal-600 text-white font-bold"></button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="lg:col-span-4 space-y-4">
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+      <h3 class="font-bold border-b border-slate-100 pb-3 mb-2">Tax summary</h3>
+      <div id="sideRows"></div>
+      <div id="sideBanner" class="mt-3 p-3.5 rounded-xl border text-center">
+        <div id="sideBannerTitle" class="text-[10px] font-extrabold uppercase tracking-wider"></div>
+        <div id="sideBannerVal" class="text-2xl font-black"></div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 text-xs space-y-2">
+      <h4 class="font-bold uppercase text-slate-500 tracking-wider">Deduction engine</h4>
+      <div class="flex justify-between"><span>Standard (+ non-itemizer charity)</span><b id="cmpStd"></b></div>
+      <div class="flex justify-between"><span>Itemized</span><b id="cmpItem"></b></div>
+      <div id="cmpMsg" class="text-[11px] text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-100"></div>
+    </div>
+    <div id="warnBox" class="hidden bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-xs space-y-1"></div>
+    <div class="bg-slate-900 text-white rounded-2xl p-5 text-xs space-y-1">
+      <div class="font-bold text-teal-400 text-sm">Tip</div><p id="tip" class="text-slate-300 leading-relaxed"></p>
+    </div>
+  </aside>
+</main>
+
+<script>
+/* ============ 2026 PARAMETERS ============ */
+const P = {
+  std:   { single:16100, mfj:32200, hoh:24150, mfs:16100 },
+  addlSingle:2050, addlMarried:1650,
+  br: {
+    single:[[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[640600,.35],[Infinity,.37]],
+    mfj:   [[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.32],[768700,.35],[Infinity,.37]],
+    hoh:   [[17700,.10],[67450,.12],[105700,.22],[201750,.24],[256200,.32],[640600,.35],[Infinity,.37]],
+    mfs:   [[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[384350,.35],[Infinity,.37]]
+  },
+  cg: { single:[49450,545500], mfj:[98900,613700], hoh:[66200,579600], mfs:[49450,306850] },
+  ssWageBase:184500,
+  iraLimit:7500,
+  iraPO: { single:[81000,91000], hoh:[81000,91000], mfj:[129000,149000], mfs:[0,10000] },
+  slLimit:2500, slPO: { single:[85000,100000], hoh:[85000,100000], mfj:[175000,205000] },
+  salt:40400, saltFloor:10000, saltPO:505000,
+  ctc:2200, actcMax:1700,
+  seniorDed:6000, seniorPO:{ single:75000, hoh:75000, mfj:150000 },
+  qbiThreshold:{ single:201750, hoh:201750, mfs:201750, mfj:403500 }
+};
+const STATUS = [['single','Single'],['mfj','Married filing jointly'],['hoh','Head of household'],['mfs','Married filing separately']];
+
+/* ============ TAX ENGINE (pure function) ============ */
+const clamp = (x,a,b) => Math.min(b, Math.max(a,x));
+function bracketTax(t, st){
+  let tax = 0, lo = 0;
+  for (const [hi, r] of P.br[st]) { if (t > lo) tax += (Math.min(t,hi) - lo) * r; lo = hi; }
+  return tax;
+}
+function phaseOut(amount, magi, [lo,hi]){ return amount * clamp((hi - magi) / (hi - lo), 0, 1); }
+
+function compute(s){
+  const st = s.st, mfj = st==='mfj', mfs = st==='mfs';
+
+  const netSE  = Math.max(0, s.freelance - s.bizExp);
+  const seBase = netSE * 0.9235;
+  const seTax  = seBase < 400 ? 0 :
+    Math.min(seBase, Math.max(0, P.ssWageBase - s.w2)) * 0.124 + seBase * 0.029;
+  const seHalf = seTax / 2;
+
+  const totalIncome = s.w2 + netSE + s.interest + s.dividends;
+  const magiPre = totalIncome - seHalf;
+  const ira = Math.min(s.ira, P.iraLimit) * (s.covered ? phaseOut(1, magiPre, P.iraPO[st]) : 1);
+  const sl  = mfs ? 0 : phaseOut(Math.min(s.sl, P.slLimit), magiPre - ira, P.slPO[st]);
+  const adjustments = seHalf + ira + sl;
+  const agi = Math.max(0, totalIncome - adjustments);
+
+  const addl = (mfj || mfs ? P.addlMarried : P.addlSingle) * (s.seniors + s.blind);
+  const nonItemCharity = Math.min(s.charity, mfj ? 2000 : 1000);
+  const stdTotal = P.std[st] + addl + nonItemCharity;
+  const half = mfs ? 2 : 1;
+  const saltBase = P.salt / half, saltFloor = P.saltFloor / half, saltPO = P.saltPO / half;
+  const saltCap = agi > saltPO ? Math.max(saltFloor, saltBase - 0.3 * (agi - saltPO)) : saltBase;
+  const salt = Math.min(s.salt, saltCap);
+  const charity = Math.max(0, s.charity - 0.005 * agi);
+  const medical = Math.max(0, s.medical - 0.075 * agi);
+  const itemized = s.mortgage + salt + charity + medical;
+  const useItemized = itemized > stdTotal;
+  const deduction = useItemized ? itemized : stdTotal;
+
+  const seniorDed = mfs ? 0 : Math.max(0, s.seniors * P.seniorDed - 0.06 * Math.max(0, agi - P.seniorPO[st]));
+  const tiPre = Math.max(0, agi - deduction - seniorDed);
+  const qbiDed = Math.min(0.2 * Math.max(0, netSE - seHalf), 0.2 * Math.max(0, tiPre - Math.min(s.qualDiv, s.dividends)));
+  const taxable = Math.max(0, tiPre - qbiDed);
+
+  const qd = Math.min(taxable, Math.min(s.qualDiv, s.dividends));
+  const ord = taxable - qd, [t0, t1] = P.cg[st];
+  const at0  = Math.max(0, Math.min(qd, t0 - ord));
+  const at15 = Math.max(0, Math.min(qd - at0, t1 - Math.max(ord, t0)));
+  const at20 = qd - at0 - at15;
+  const tax = bracketTax(ord, st) + 0.15 * at15 + 0.20 * at20;
+
+  const ctcFull = s.children * P.ctc;
+  const ctcPO = Math.ceil(Math.max(0, agi - (mfj ? 400000 : 200000)) / 1000) * 50;
+  const ctc = Math.max(0, ctcFull - ctcPO);
+  const nonref = Math.min(ctc, tax);
+  const earned = Math.max(0, s.w2 + netSE - seHalf);
+  const actc = Math.max(0, Math.min(ctc - nonref, s.children * P.actcMax, 0.15 * Math.max(0, earned - 2500)));
+
+  const incomeTax = tax - nonref;
+  const totalTax = incomeTax + seTax;
+  const withholding = s.w2Withheld + s.estPaid;
+  const payments = withholding + actc;
+  const net = payments - totalTax;
+
+  const warnings = [];
+  if (st === 'hoh' && s.children === 0) warnings.push('Head of household normally requires a qualifying person (child or other dependent).');
+  if (netSE > 0 && tiPre > P.qbiThreshold[st]) warnings.push('Taxable income is above the QBI threshold; SSTB/wage limits may reduce or remove the QBI deduction.');
+  if (s.ira > P.iraLimit) warnings.push('IRA contribution exceeds the annual limit; the excess was ignored.');
+  if (s.freelance < s.bizExp) warnings.push('Business expenses exceed freelance income; the loss is not modeled and net business income is treated as $0.');
+  if (s.sl > 0 && sl < Math.min(s.sl, P.slLimit)) warnings.push('Student loan interest deduction is reduced or disallowed at your income level.');
+
+  return { st, totalIncome, netSE, seTax, seHalf, ira, sl, adjustments, agi, stdTotal, nonItemCharity, itemized, useItemized,
+    deduction, seniorDed, qbiDed, taxable, tax, ctc, nonref, actc, incomeTax, totalTax, withholding, payments, net, warnings,
+    interest: s.interest, dividends: s.dividends, qualDiv: qd, w2: s.w2 };
+}
+
+/* ============ UI ============ */
+const $ = id => document.getElementById(id);
+const fmt = v => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US');
+const num = id => Math.max(0, parseFloat($(id).value) || 0);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const INCOME = [
+  ['w2Wages','W-2 wages (Box 1)',95000,'Box 1 already excludes 401(k) deferrals.'],
+  ['w2Withheld','Federal tax withheld (Box 2)',14200],
+  ['freelance','Gross freelance income (1099-NEC)',12500],
+  ['bizExp','Business expenses (Schedule C)',2100],
+  ['estPaid','Estimated payments / 1099 withholding',1200],
+  ['interest','Taxable interest (1099-INT)',850],
+  ['dividends','Ordinary dividends (1099-DIV 1a)',1400],
+  ['qualDiv','…of which qualified (1b)',900,'Taxed at lower capital-gain rates.']
+];
+const DEDUCT = [
+  ['children','Qualifying children under 17',1,'Credit per child, reduced at high income.'],
+  ['ira','Traditional IRA contribution',3500,'Do not include 401(k) deferrals; they are already out of Box 1.'],
+  ['studentLoan','Student loan interest paid',1200,'Up to $2,500; income phase-out applies.'],
+  ['mortgage','Mortgage interest (1098)',9800],
+  ['salt','State & local income / property taxes',4200,'Subject to the SALT cap.'],
+  ['charity','Cash charitable donations',1500],
+  ['medical','Unreimbursed medical expenses',0,'Only the part above 7.5% of AGI counts.']
+];
+const field = ([id,l,d,h]) => `<div><label class="lbl" for="${id}">${l}</label><input type="number" min="0" id="${id}" value="${d}" class="inp" oninput="update()"><p class="text-[11px] text-slate-500 mt-1">${h||''}</p></div>`;
+$('incomeFields').innerHTML = INCOME.map(field).join('');
+$('deductFields').innerHTML = DEDUCT.map(field).join('');
+$('priorFields').innerHTML = [
+  ['priorTax','2025 total tax (Form 1040, line 24)',10800,'Leave blank if unknown or if 2025 was not a full 12-month year. Enter 0 if you owed no tax.'],
+  ['priorAGI','2025 adjusted gross income (line 11)',96000,'Above $150,000 ($75,000 if married filing separately) raises the prior-year safe harbor to 110%.']
+].map(field).join('');
+$('statusCards').innerHTML = STATUS.map(([v,l],i) => `
+  <label class="status-card border-2 rounded-xl p-3 cursor-pointer text-sm">
+    <input type="radio" name="status" value="${v}" ${i===0?'checked':''} class="mb-1" onchange="update()"> <b>${l}</b>
+    <div class="text-xs text-slate-500">Std. deduction ${fmt(P.std[v])}</div></label>`).join('');
+
+document.querySelectorAll('input').forEach(el => el.addEventListener('input', update));
+document.querySelectorAll('input[name="status"]').forEach(el => el.addEventListener('change', update));
+$('covered').addEventListener('change', update);
+
+function readState(){
+  const stEl = document.querySelector('input[name=status]:checked');
+  const stVal = stEl ? stEl.value : 'single';
+  const mx = stVal === 'mfj' ? 2 : 1;
+  return { st: stVal,
+    w2:num('w2Wages'), w2Withheld:num('w2Withheld'), freelance:num('freelance'), bizExp:num('bizExp'), estPaid:num('estPaid'),
+    interest:num('interest'), dividends:num('dividends'), qualDiv:num('qualDiv'),
+    children:Math.floor(num('children')), ira:num('ira'), sl:num('studentLoan'), mortgage:num('mortgage'),
+    salt:num('salt'), charity:num('charity'), medical:num('medical'),
+    seniors:Math.min(Math.floor(num('seniors')), mx), blind:Math.min(Math.floor(num('blind')), mx), covered:$('covered').checked,
+    priorTax: $('priorTax').value === '' ? null : num('priorTax'), priorAGI: num('priorAGI') };
+}
+
+const rowHTML = (l, v, cls='') => `<div class="row ${cls}"><span class="text-slate-600">${l}</span><b>${v}</b></div>`;
+
+function update(){
+  const s = readState(), r = compute(s), st = r.st;
+  document.querySelectorAll('.status-card').forEach(c => {
+    const radio = c.querySelector('input');
+    const on = radio && radio.checked;
+    c.classList.toggle('border-sky-500', on); c.classList.toggle('bg-sky-50', on); c.classList.toggle('border-slate-200', !on);
+  });
+  const refund = r.net >= 0, amt = fmt(Math.abs(r.net));
+  $('tickerLabel').textContent = refund ? 'Estimated Refund' : 'Amount You Owe';
+  $('ticker').textContent = amt;
+  $('ticker').className = 'text-2xl font-black ' + (refund ? 'text-emerald-400' : 'text-rose-400');
+
+  $('sideRows').innerHTML = [
+    ['Total income', fmt(r.totalIncome)], ['Adjustments', '-' + fmt(r.adjustments)], ['AGI', fmt(r.agi), 'bg-slate-50 font-bold'],
+    [r.useItemized ? 'Itemized deduction' : 'Standard deduction', '-' + fmt(r.deduction)],
+    ['QBI + senior deduction', '-' + fmt(r.qbiDed + r.seniorDed)], ['Taxable income', fmt(r.taxable), 'font-bold'],
+    ['Income tax', fmt(r.tax)], ['Child tax credit', '-' + fmt(r.nonref)], ['Self-employment tax', fmt(r.seTax)],
+    ['Total tax', fmt(r.totalTax), 'font-bold'], ['Withholding + estimated', fmt(r.withholding)], ['Refundable child credit', fmt(r.actc)]
+  ].map(a => rowHTML(a[0], a[1], a[2])).join('');
+  const bc = refund ? ['bg-emerald-50 border-emerald-200 text-emerald-800','text-emerald-600'] : ['bg-rose-50 border-rose-200 text-rose-800','text-rose-600'];
+  $('sideBanner').className = 'mt-3 p-3.5 rounded-xl border text-center ' + bc[0];
+  $('sideBannerTitle').textContent = refund ? 'Estimated refund' : 'Balance due';
+  $('sideBannerVal').textContent = amt; $('sideBannerVal').className = 'text-2xl font-black ' + bc[1];
+
+  $('cmpStd').textContent = fmt(r.stdTotal); $('cmpItem').textContent = fmt(r.itemized);
+  $('cmpMsg').textContent = r.useItemized ? `Itemizing beats the standard deduction by ${fmt(r.itemized - r.stdTotal)}.` : 'The standard deduction gives the bigger benefit.';
+  $('warnBox').classList.toggle('hidden', !r.warnings.length);
+  $('warnBox').innerHTML = r.warnings.map(w => '<div>⚠ ' + esc(w) + '</div>').join('');
+
+  // Form 1040 preview
+  const digits = $('ssn').value.replace(/\D/g, '');
+  $('sumSSN').textContent = 'SSN: XXX-XX-' + (digits.length >= 4 ? digits.slice(-4) : 'XXXX');
+  $('sumName').textContent = (($('firstName').value || 'Taxpayer') + ' ' + $('lastName').value).trim();
+  const foundStatus = STATUS.find(x => x[0] === st);
+  $('sumStatus').textContent = foundStatus ? foundStatus[1] : 'Single';
+  $('formRows').innerHTML = [
+    ['1z: Wages (W-2)', fmt(r.w2)], ['2b: Taxable interest', fmt(r.interest)],
+    ['3b: Ordinary dividends (3a qualified: ' + fmt(r.qualDiv) + ')', fmt(r.dividends)],
+    ['8 (Sch. 1): Business income', fmt(r.netSE)], ['9: Total income', fmt(r.totalIncome), 'bg-slate-50 font-semibold'],
+    ['10: Adjustments (½ SE tax, IRA, student loan)', '-' + fmt(r.adjustments)], ['11: Adjusted gross income', fmt(r.agi), 'bg-slate-50 font-semibold'],
+    ['12: ' + (r.useItemized ? 'Itemized' : 'Standard') + ' deduction', '-' + fmt(r.deduction)],
+    ['13a: QBI deduction', '-' + fmt(r.qbiDed)], ['13b: Senior deduction (Sch. 1-A)', '-' + fmt(r.seniorDed)],
+    ['15: Taxable income', fmt(r.taxable), 'bg-slate-50 font-semibold'], ['16: Tax', fmt(r.tax)],
+    ['19: Child tax credit (nonrefundable)', '-' + fmt(r.nonref)], ['23: Other taxes (self-employment, Sch. 2)', fmt(r.seTax)],
+    ['24: Total tax', fmt(r.totalTax), 'bg-slate-100 font-bold'], ['25d/26: Withholding + estimated payments', fmt(r.withholding)],
+    ['28: Refundable child tax credit', fmt(r.actc)], ['33: Total payments', fmt(r.payments), 'font-semibold']
+  ].map(a => rowHTML('Line ' + a[0], a[1], a[2])).join('');
+  $('formBanner').className = 'p-4 rounded-xl border-2 flex items-center justify-between ' + (refund ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-rose-50 border-rose-300 text-rose-800');
+  $('formBannerTitle').textContent = refund ? 'Refund (line 34)' : 'Amount you owe (line 37)';
+  $('formBannerAmt').textContent = amt;
+  renderQuarterly(r, s);
+}
+
+/* ---- Quarterly estimated tax (safe-harbor test) ---- */
+const DUES = [['Q1','2026-04-15'],['Q2','2026-06-15'],['Q3','2026-09-15'],['Q4','2027-01-15']];
+function quarterly(r, s){
+  const limit = s.st === 'mfs' ? 75000 : 150000;
+  const pct = s.priorAGI > limit ? 1.10 : 1.00;
+  const current = 0.9 * r.totalTax;
+  const prior = s.priorTax === null ? Infinity : s.priorTax * pct;
+  const required = Math.min(current, prior);
+  const credits = s.w2Withheld + r.actc;
+  const owed = r.totalTax - credits;
+  const needed = owed >= 1000 ? Math.max(0, required - credits) : 0;
+  return { pct, current, prior, required, basis: prior < current ? 'prior-year' : 'current-year', credits, owed, needed,
+    perQ: needed / 4, remaining: Math.max(0, needed - s.estPaid), nextYear: r.totalTax * (r.agi > limit ? 1.10 : 1.00) };
+}
+function renderQuarterly(r, s){
+  const q = quarterly(r, s), today = new Date(); today.setHours(0,0,0,0);
+  const dues = DUES.map(([n, d]) => ({ n, date: new Date(d + 'T00:00:00') }));
+  const idx = dues.findIndex(x => x.date >= today), passed = idx < 0 ? 4 : idx;
+  const fd = d => d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  const TONE = { g:'bg-emerald-50 border-emerald-300 text-emerald-900', a:'bg-amber-50 border-amber-300 text-amber-900' };
+  let tone = 'g', head, body;
+  if (q.owed < 1000) {
+    head = 'No estimated payments needed';
+    body = `You expect to owe ${fmt(Math.max(0, q.owed))} or less after withholding and refundable credits, which is under the $1,000 threshold.`;
+  } else if (q.remaining <= 0) {
+    head = "You're covered";
+    body = q.needed === 0 ? 'Your withholding and credits alone meet the safe harbor, so no underpayment penalty should apply.'
+                        : `Your estimated payments (${fmt(s.estPaid)}) meet the ${fmt(q.needed)} needed for the safe harbor.`;
+  } else {
+    tone = 'a'; head = 'Estimated payments needed';
+    const amt = idx < 0 ? q.remaining : Math.min(q.remaining, Math.max(0, q.perQ * (idx + 1) - s.estPaid));
+    body = idx < 0
+      ? `All 2026 due dates have passed. Pay ${fmt(q.remaining)} as soon as possible; the penalty keeps accruing until you do.`
+      : `${amt > 0 ? 'Pay ' + fmt(amt) + ' by ' + fd(dues[idx].date) + '.' : 'You are on pace for the next installment (' + fd(dues[idx].date) + ').'} Total still needed this year: ${fmt(q.remaining)}.`;
+    if (s.estPaid < q.perQ * passed - 0.5) body += ' Earlier installments were underpaid, so a small penalty may still apply; paying now stops it from growing, and Form 2210 calculates the exact amount.';
+  }
+  const rows = [
+    ['2026 tax × 90%', fmt(q.current)],
+    [`2025 tax × ${Math.round(q.pct * 100)}%`, q.prior === Infinity ? 'Enter 2025 tax to use' : fmt(q.prior)],
+    ['Required annual payment (the lower one)', `${fmt(q.required)} (${q.basis} basis)`],
+    ['Withholding + refundable credits', fmt(q.credits)],
+    ['Expected balance due before estimates', fmt(q.owed)],
+    ['Estimated payments needed for 2026', fmt(q.needed)],
+    ['Estimated payments made so far', fmt(s.estPaid)]
+  ].map(a => rowHTML(a[0], a[1])).join('');
+  const sched = dues.map((d, i) => rowHTML(`${d.n} – ${fd(d.date)}${d.date < today ? ' (passed)' : ''}`, `Cumulative target ${fmt(q.perQ * (i + 1))}`)).join('');
+  $('qResult').innerHTML = `
+    <div class="p-4 rounded-xl border-2 ${TONE[tone]}"><div class="font-extrabold">${head}</div><div class="text-sm mt-1">${body}</div></div>
+    <div><div class="lbl">Safe-harbor test</div>${rows}</div>
+    <div><div class="lbl">Installment schedule (estimated payments only)</div>${sched}</div>
+    <div class="text-sm bg-sky-50 border border-sky-100 rounded-xl p-3"><b>Planning for 2027:</b> paying ${fmt(q.nextYear)} in total during 2027 (withholding counts) protects you under the prior-year rule, or about ${fmt(q.nextYear / 4)} per quarter if you have no withholding. This relies on the estimate above.</div>
+    <p class="text-[11px] text-slate-500">Simplified. Not modeled: the annualized income installment method (Form 2210, Schedule AI) that can reduce penalties for uneven income, state estimated taxes, and the penalty amount itself. Payments are due Apr 15, Jun 15, Sep 15 and Jan 15; confirm dates and rules at irs.gov.</p>`;
+}
+
+/* ---- Wizard ---- */
+const TITLES = ['Documents','Personal & filing status','Income','Credits & deductions','Summary','Quarterly estimates'];
+const TIPS = [
+  'Attach documents here for reference, then enter the box amounts in Step 3.',
+  'Married filing jointly usually has the larger standard deduction, but compare against filing separately for your situation.',
+  'Freelance income is also subject to self-employment tax (15.3% on 92.35% of net earnings), which this estimate includes.',
+  'Deductions reduce taxable income, so each dollar saves your marginal rate, not a full dollar of refund. Credits reduce tax dollar for dollar.',
+  'Review each line, then print or save as PDF. This is an estimate, not a filed return.',
+  'You generally owe a penalty only if you expect to owe $1,000 or more after withholding AND pay less than the safe harbor. Extra W-4 withholding added late in the year is treated as paid evenly across the year.'
+];
+let cur = 1;
+$('stepNav').innerHTML = [1,2,3,4,5,6].map(i => `<button data-s="${i}" class="text-xs py-1.5 rounded-lg">${i}. ${['Uploads','Personal','Income','Deductions','Summary','Quarterly'][i-1]}</button>`).join('');
+$('stepNav').onclick = e => { const b = e.target.closest('button'); if (b) showStep(+b.dataset.s); };
+$('prevBtn').onclick = () => showStep(cur - 1);
+$('nextBtn').onclick = () => showStep(cur + 1);
+
+function showStep(n){
+  cur = clamp(n, 1, 6);
+  for (let i = 1; i <= 6; i++) $('step-' + i).classList.toggle('hidden', i !== cur);
+  document.querySelectorAll('#stepNav button').forEach(b => {
+    const on = +b.dataset.s === cur;
+    b.className = 'text-xs py-1.5 rounded-lg ' + (on ? 'bg-sky-50 text-sky-800 font-bold border border-sky-200' : 'text-slate-500 hover:bg-slate-100');
+    on ? b.setAttribute('aria-current', 'step') : b.removeAttribute('aria-current');
+  });
+  $('bar').style.width = (cur * 100 / 6) + '%';
+  $('stepText').textContent = `Step ${cur} of 6`; $('stepTitle').textContent = TITLES[cur - 1];
+  $('prevBtn').disabled = cur === 1;
+  $('nextBtn').textContent = 'Continue →'; $('nextBtn').classList.toggle('invisible', cur === 6);
+  $('tip').textContent = TIPS[cur - 1];
+}
+function printForm(){ showStep(5); setTimeout(() => window.print(), 50); }
+
+/* ---- Documents & Sample Data & Drafts ---- */
+let docs = [];
+function addDoc(d){ if (!docs.some(x => x.name === d.name)) docs.push(d); renderDocs(); }
+function renderDocs(){
+  $('docCount').textContent = docs.length;
+  const list = $('docList');
+  list.innerHTML = docs.length ? '' : '<div class="text-center py-6 text-slate-400 text-xs italic border border-dashed rounded-xl">No documents attached.</div>';
+  docs.forEach((d, i) => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs';
+    row.innerHTML = `<div><b>${esc(d.name)}</b> <span class="text-slate-400">(${Math.round(d.size/1024)} KB)</span></div><button onclick="docs.splice(${i},1);renderDocs()" class="text-rose-500 font-bold hover:underline">Remove</button>`;
+    list.appendChild(row);
+  });
+}
+$('fileInput').onchange = e => { Array.from(e.target.files).forEach(addDoc); };
+const dz = $('dropZone');
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('border-sky-500','bg-sky-50'); };
+dz.ondragleave = () => { dz.classList.remove('border-sky-500','bg-sky-50'); };
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('border-sky-500','bg-sky-50'); Array.from(e.dataTransfer.files).forEach(addDoc); };
+
+function loadSample(type){
+  if(type === 'w2'){
+    $('w2Wages').value = 95000; $('w2Withheld').value = 14200;
+  } else if(type === 'nec'){
+    $('freelance').value = 25000; $('bizExp').value = 4000;
+  } else if(type === 'full'){
+    $('firstName').value = 'Juan'; $('lastName').value = 'Correa'; $('occupation').value = 'AVP Enterprise Risk Management';
+    $('w2Wages').value = 145000; $('w2Withheld').value = 24000;
+    $('freelance').value = 18000; $('bizExp').value = 3500;
+    $('interest').value = 450; $('dividends').value = 850; $('qualDiv').value = 600;
+    $('children').value = 0; $('ira').value = 7500; $('studentLoan').value = 0;
+    $('mortgage').value = 14000; $('salt').value = 10000; $('charity').value = 2500; $('medical').value = 0;
+    document.querySelector('input[name=status][value="mfj"]').checked = true;
+  }
+  update();
+}
+
+function saveDraft(){
+  const state = readState();
+  state.firstName = $('firstName').value;
+  state.lastName = $('lastName').value;
+  state.ssn = $('ssn').value;
+  state.occupation = $('occupation').value;
+  localStorage.setItem('correa_tax_draft', JSON.stringify(state));
+  alert('Draft saved successfully to browser storage!');
+}
+
+function loadDraft(){
+  const raw = localStorage.getItem('correa_tax_draft');
+  if(!raw){ alert('No saved draft found.'); return; }
+  try {
+    const s = JSON.parse(raw);
+    if(s.firstName) $('firstName').value = s.firstName;
+    if(s.lastName) $('lastName').value = s.lastName;
+    if(s.ssn) $('ssn').value = s.ssn;
+    if(s.occupation) $('occupation').value = s.occupation;
+    if(s.st){
+      const radio = document.querySelector(`input[name=status][value="${s.st}"]`);
+      if(radio) radio.checked = true;
+    }
+    if(s.w2 !== undefined) $('w2Wages').value = s.w2;
+    if(s.w2Withheld !== undefined) $('w2Withheld').value = s.w2Withheld;
+    if(s.freelance !== undefined) $('freelance').value = s.freelance;
+    if(s.bizExp !== undefined) $('bizExp').value = s.bizExp;
+    if(s.estPaid !== undefined) $('estPaid').value = s.estPaid;
+    if(s.interest !== undefined) $('interest').value = s.interest;
+    if(s.dividends !== undefined) $('dividends').value = s.dividends;
+    if(s.qualDiv !== undefined) $('qualDiv').value = s.qualDiv;
+    if(s.children !== undefined) $('children').value = s.children;
+    if(s.ira !== undefined) $('ira').value = s.ira;
+    if(s.sl !== undefined) $('studentLoan').value = s.sl;
+    if(s.mortgage !== undefined) $('mortgage').value = s.mortgage;
+    if(s.salt !== undefined) $('salt').value = s.salt;
+    if(s.charity !== undefined) $('charity').value = s.charity;
+    if(s.medical !== undefined) $('medical').value = s.medical;
+    if(s.seniors !== undefined) $('seniors').value = s.seniors;
+    if(s.blind !== undefined) $('blind').value = s.blind;
+    if(s.covered !== undefined) $('covered').checked = s.covered;
+    if(s.priorTax !== null && s.priorTax !== undefined) $('priorTax').value = s.priorTax;
+    if(s.priorAGI !== undefined) $('priorAGI').value = s.priorAGI;
+    update();
+    alert('Draft loaded successfully!');
+  } catch(e) {
+    alert('Error loading draft.');
+  }
+}
+
+function resetData(){
+  if(confirm('Are you sure you want to reset all form values?')){
+    localStorage.removeItem('correa_tax_draft');
+    location.reload();
+  }
+}
+
+function exportJSON(){
+  const s = readState(), r = compute(s);
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({state: s, result: r}, null, 2));
+  const dlAnchorElem = document.createElement('a');
+  dlAnchorElem.setAttribute("href", dataStr);
+  dlAnchorElem.setAttribute("download", "correa_tax_2026_estimate.json");
+  dlAnchorElem.click();
+}
+
+showStep(1);
+update();
+</script>
+</body>
+</html>
